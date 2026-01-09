@@ -1,14 +1,9 @@
 [project]
-name = "my-rl-project"
+name = "dqn-cartpole"
 version = "0.1.0"
-description = "Reinforcement learning project using Gymnasium"
-authors = [
-    { name = "Your Name" }
-]
-readme = "README.md"
+description = "DQN reinforcement learning for CartPole"
 requires-python = ">=3.10"
 
-# Core dependencies
 dependencies = [
     "gymnasium[classic-control]",
     "numpy",
@@ -19,6 +14,14 @@ dependencies = [
     "gguf"
 ]
 
+[project.scripts]
+dqn-train = "python.scripts.train:main"
+dqn-eval = "python.scripts.evaluate:main"
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["python*"]

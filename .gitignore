@@ -1,1 +1,37 @@
-/target
+# Rust build
+/target/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.venv/
+venv/
+.env
+
+# ML artifacts - binary weights and data
+*.gguf
+*.bin
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Outputs
+policy_outputs.txt
+*.log

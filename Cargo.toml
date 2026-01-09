@@ -1,12 +1,15 @@
 [package]
 name = "cant_gym"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
-cant = {path="../../Documents/Github/can-t"}
-gym-rs = {path="../gym-rs"}
+# NOTE: These local dependencies need to be cloned to sibling directories:
+# - cant: git clone https://github.com/YOUR_USERNAME/can-t ../can-t
+# - gym-rs: git clone https://github.com/YOUR_USERNAME/gym-rs ../gym-rs
+cant = { path = "../can-t" }
+gym-rs = { path = "../gym-rs" }
 rand = "0.8"
 ordered-float = { version = ">=3.9.1", features = ["serde", "rand"] }
 ratatui = "0.29"
