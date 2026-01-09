@@ -1,0 +1,15 @@
+[package]
+name = "cant_gym"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+cant = {path="../../Documents/Github/can-t"}
+gym-rs = {path="../gym-rs"}
+rand = "0.8"
+ordered-float = { version = ">=3.9.1", features = ["serde", "rand"] }
+ratatui = "0.29"
+crossterm = "0.28"
+clap = { version = "4.5.53", features = ["derive"] }
+par-iter = "2.0.0"

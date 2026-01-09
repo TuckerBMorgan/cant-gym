@@ -1,0 +1,7 @@
+gymnasium[classic-control]
+numpy
+typing-extensions
+torch>=2.7.0
+torchvision>=0.22.0
+matplotlib
+gguf
