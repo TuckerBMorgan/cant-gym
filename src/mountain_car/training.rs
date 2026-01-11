@@ -65,32 +65,30 @@ pub fn optimize_model(
 
     let non_final_mask: Vec<bool> = batch.next_state.iter().map(|x| x.is_some()).collect();
 
+    // Use stack for O(n) construction instead of repeated cat which is O(n^2)
     let non_final_next_states: Vec<Tensor> =
         batch.next_state.iter().filter_map(|ns| *ns).collect();
-    let mut count = 1;
-    let mut non_final_next_states_batched = non_final_next_states[0];
-    for nfns in non_final_next_states.iter().skip(1) {
-        non_final_next_states_batched = non_final_next_states_batched.cat(*nfns, 0);
-        count += 1;
-    }
+    let count = non_final_next_states.len();
+
+    let mut non_final_next_states_batched = if count > 1 {
+        non_final_next_states[0].stack(non_final_next_states[1..].to_vec(), 0)
+    } else {
+        non_final_next_states[0]
+    };
 
     non_final_next_states_batched =
         non_final_next_states_batched.reshape(Shape::new(vec![count, OBSERVATION_SIZE]));
     non_final_next_states_batched = non_final_next_states_batched.detach();
 
-    let mut state_batch = batch.state[0].stack(batch.state[1..batch.state.len()].to_vec(), 0);
+    // Use stack for O(n) batch construction instead of repeated cat which is O(n^2)
+    let mut state_batch = batch.state[0].stack(batch.state[1..].to_vec(), 0);
     state_batch = state_batch.detach();
 
-    let mut action_batch = batch.action[0];
-    for action in batch.action.iter().skip(1) {
-        action_batch = action_batch.cat(*action, 0);
-    }
+    let mut action_batch = batch.action[0].stack(batch.action[1..].to_vec(), 0);
     action_batch = action_batch.detach();
 
-    let mut reward_batch = batch.reward[0];
-    for reward in batch.reward.iter().skip(1) {
-        reward_batch = reward_batch.cat(*reward, 0);
-    }
+    let mut reward_batch = batch.reward[0].stack(batch.reward[1..].to_vec(), 0);
+    reward_batch = reward_batch.reshape(Shape::new(vec![BATCH_SIZE]));
     reward_batch = reward_batch.detach();
 
     let state_action_values = policy_net.forward(state_batch).gather(1, action_batch);
@@ -109,6 +107,8 @@ pub fn optimize_model(
     }
 
     let expected_state_action_values = (next_state_values * GAMMA) + reward_batch;
+    // TODO: Change to smooth_l1_loss/huber_loss to match Python implementation
+    // Python uses nn.SmoothL1Loss() (Huber loss) which is more robust to outliers
     let loss = state_action_values.l1_loss(expected_state_action_values);
 
     update_timings(timings, String::from("LossCalculate"), &start);
@@ -123,11 +123,7 @@ pub fn optimize_model(
     get_equation().compact_tensor_store();
 }
 
-fn update_layer(
-    policy_layer: &Linear,
-    target_layer: &mut Linear,
-    _timings: &mut HashMap<String, u128>,
-) {
+fn update_layer(policy_layer: &Linear, target_layer: &mut Linear) {
     let layer_weight_policy: Vec<f32> = policy_layer
         .weights
         .item()
@@ -195,10 +191,10 @@ fn update_layer(
     target_layer.bias = Some(target_layer_new_bias_tensor);
 }
 
-pub fn update_model(policy_net: &mut DQN, target_net: &mut DQN, timings: &mut HashMap<String, u128>) {
-    update_layer(&policy_net.layer_1, &mut target_net.layer_1, timings);
-    update_layer(&policy_net.layer_2, &mut target_net.layer_2, timings);
-    update_layer(&policy_net.layer_3, &mut target_net.layer_3, timings);
+pub fn update_model(policy_net: &mut DQN, target_net: &mut DQN, _timings: &mut HashMap<String, u128>) {
+    update_layer(&policy_net.layer_1, &mut target_net.layer_1);
+    update_layer(&policy_net.layer_2, &mut target_net.layer_2);
+    update_layer(&policy_net.layer_3, &mut target_net.layer_3);
 }
 
 pub fn convert_observation_to_tensor(observation: MountainCarObservation) -> Tensor {

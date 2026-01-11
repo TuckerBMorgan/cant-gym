@@ -60,14 +60,10 @@ impl ReplayMemory {
             "Cannot sample more elements than are in the replay buffer"
         );
 
+        // Use index-based sampling to avoid cloning the entire buffer
         let mut rng = rand::thread_rng();
-        self.memory_buffer
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .choose_multiple(&mut rng, batch_size)
-            .cloned()
-            .collect()
+        let indices = rand::seq::index::sample(&mut rng, self.memory_buffer.len(), batch_size);
+        indices.into_iter().map(|i| self.memory_buffer[i]).collect()
     }
 
     pub fn length(&self) -> usize {
@@ -102,5 +98,111 @@ impl TransitionSOA {
             next_state,
             reward,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cant::central::Shape;
+
+    fn create_test_tensor(value: f32) -> Tensor {
+        Tensor::element(Shape::new(vec![1]), value)
+    }
+
+    fn create_test_transition(value: f32) -> Transition {
+        Transition::new(
+            create_test_tensor(value),
+            create_test_tensor(value),
+            Some(create_test_tensor(value + 1.0)),
+            create_test_tensor(1.0),
+        )
+    }
+
+    #[test]
+    fn test_replay_memory_new() {
+        let memory = ReplayMemory::new(100);
+        assert_eq!(memory.length(), 0);
+        assert_eq!(memory.max_capacity, 100);
+    }
+
+    #[test]
+    fn test_replay_memory_push_and_length() {
+        let mut memory = ReplayMemory::new(100);
+
+        for i in 0..10 {
+            memory.push_transition(create_test_transition(i as f32));
+        }
+
+        assert_eq!(memory.length(), 10);
+    }
+
+    #[test]
+    fn test_replay_memory_capacity_overflow() {
+        let mut memory = ReplayMemory::new(5);
+
+        // Push 10 transitions into a buffer of capacity 5
+        for i in 0..10 {
+            memory.push_transition(create_test_transition(i as f32));
+        }
+
+        // Should still be at capacity
+        assert_eq!(memory.length(), 5);
+    }
+
+    #[test]
+    fn test_replay_memory_sample_size() {
+        let mut memory = ReplayMemory::new(100);
+
+        for i in 0..50 {
+            memory.push_transition(create_test_transition(i as f32));
+        }
+
+        let sample = memory.sample(10);
+        assert_eq!(sample.len(), 10);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot sample more elements than are in the replay buffer")]
+    fn test_replay_memory_sample_exceeds_size() {
+        let mut memory = ReplayMemory::new(100);
+
+        for i in 0..5 {
+            memory.push_transition(create_test_transition(i as f32));
+        }
+
+        // This should panic
+        let _ = memory.sample(10);
+    }
+
+    #[test]
+    fn test_transition_soa_conversion() {
+        let transitions = vec![
+            create_test_transition(1.0),
+            create_test_transition(2.0),
+            create_test_transition(3.0),
+        ];
+
+        let soa = TransitionSOA::new(transitions);
+
+        assert_eq!(soa.state.len(), 3);
+        assert_eq!(soa.action.len(), 3);
+        assert_eq!(soa.next_state.len(), 3);
+        assert_eq!(soa.reward.len(), 3);
+    }
+
+    #[test]
+    fn test_transition_with_terminal_state() {
+        let terminal_transition = Transition::new(
+            create_test_tensor(1.0),
+            create_test_tensor(0.0),
+            None, // Terminal state
+            create_test_tensor(10.0),
+        );
+
+        assert!(terminal_transition.next_state.is_none());
+
+        let soa = TransitionSOA::new(vec![terminal_transition]);
+        assert!(soa.next_state[0].is_none());
     }
 }
