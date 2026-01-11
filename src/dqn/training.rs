@@ -65,32 +65,30 @@ pub fn optimize_model(
 
     let non_final_mask: Vec<bool> = batch.next_state.iter().map(|x| x.is_some()).collect();
 
+    // Use stack for O(n) construction instead of repeated cat which is O(n^2)
     let non_final_next_states: Vec<Tensor> =
         batch.next_state.iter().filter_map(|ns| *ns).collect();
-    let mut count = 1;
-    let mut non_final_next_states_batched = non_final_next_states[0];
-    for nfns in non_final_next_states.iter().skip(1) {
-        non_final_next_states_batched = non_final_next_states_batched.cat(*nfns, 0);
-        count += 1;
-    }
+    let count = non_final_next_states.len();
+
+    let mut non_final_next_states_batched = if count > 1 {
+        non_final_next_states[0].stack(non_final_next_states[1..].to_vec(), 0)
+    } else {
+        non_final_next_states[0]
+    };
 
     non_final_next_states_batched =
         non_final_next_states_batched.reshape(Shape::new(vec![count, OBSERVATION_SIZE]));
     non_final_next_states_batched = non_final_next_states_batched.detach();
 
-    let mut state_batch = batch.state[0].stack(batch.state[1..batch.state.len()].to_vec(), 0);
+    // Use stack for O(n) batch construction instead of repeated cat which is O(n^2)
+    let mut state_batch = batch.state[0].stack(batch.state[1..].to_vec(), 0);
     state_batch = state_batch.detach();
 
-    let mut action_batch = batch.action[0];
-    for action in batch.action.iter().skip(1) {
-        action_batch = action_batch.cat(*action, 0);
-    }
+    let mut action_batch = batch.action[0].stack(batch.action[1..].to_vec(), 0);
     action_batch = action_batch.detach();
 
-    let mut reward_batch = batch.reward[0];
-    for reward in batch.reward.iter().skip(1) {
-        reward_batch = reward_batch.cat(*reward, 0);
-    }
+    let mut reward_batch = batch.reward[0].stack(batch.reward[1..].to_vec(), 0);
+    reward_batch = reward_batch.reshape(Shape::new(vec![BATCH_SIZE]));
     reward_batch = reward_batch.detach();
 
     let state_action_values = policy_net.forward(state_batch).gather(1, action_batch);
@@ -109,6 +107,8 @@ pub fn optimize_model(
     }
 
     let expected_state_action_values = (next_state_values * GAMMA) + reward_batch;
+    // TODO: Change to smooth_l1_loss/huber_loss to match Python implementation
+    // Python uses nn.SmoothL1Loss() (Huber loss) which is more robust to outliers
     let loss = state_action_values.l1_loss(expected_state_action_values);
 
     update_timings(timings, String::from("LossCalculate"), &start);
@@ -123,7 +123,7 @@ pub fn optimize_model(
     get_equation().compact_tensor_store();
 }
 
-fn update_layer(policy_layer: &Linear, target_layer: &mut Linear, _timings: &mut HashMap<String, u128>) {
+fn update_layer(policy_layer: &Linear, target_layer: &mut Linear) {
     let layer_weight_policy: Vec<f32> = policy_layer
         .weights
         .item()
@@ -191,10 +191,10 @@ fn update_layer(policy_layer: &Linear, target_layer: &mut Linear, _timings: &mut
     target_layer.bias = Some(target_layer_new_bias_tensor);
 }
 
-pub fn update_model(policy_net: &mut DQN, target_net: &mut DQN, timings: &mut HashMap<String, u128>) {
-    update_layer(&policy_net.layer_1, &mut target_net.layer_1, timings);
-    update_layer(&policy_net.layer_2, &mut target_net.layer_2, timings);
-    update_layer(&policy_net.layer_3, &mut target_net.layer_3, timings);
+pub fn update_model(policy_net: &mut DQN, target_net: &mut DQN, _timings: &mut HashMap<String, u128>) {
+    update_layer(&policy_net.layer_1, &mut target_net.layer_1);
+    update_layer(&policy_net.layer_2, &mut target_net.layer_2);
+    update_layer(&policy_net.layer_3, &mut target_net.layer_3);
 }
 
 pub fn convert_observation_to_tensor(observation: CartPoleObservation) -> Tensor {
@@ -203,4 +203,69 @@ pub fn convert_observation_to_tensor(observation: CartPoleObservation) -> Tensor
     let mut state = Tensor::from_vec(observation_as_vec, vec![OBSERVATION_SIZE]);
     state.set_keep_alive(true);
     state
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_epsilon_at_start() {
+        // At step 0, epsilon should be EPS_START
+        let epsilon = calculate_epsilon(0);
+        assert!((epsilon - EPS_START).abs() < 1e-6, "Expected {}, got {}", EPS_START, epsilon);
+    }
+
+    #[test]
+    fn test_epsilon_decreases_over_time() {
+        let eps_0 = calculate_epsilon(0);
+        let eps_100 = calculate_epsilon(100);
+        let eps_1000 = calculate_epsilon(1000);
+        let eps_5000 = calculate_epsilon(5000);
+
+        assert!(eps_100 < eps_0, "Epsilon should decrease: {} should be < {}", eps_100, eps_0);
+        assert!(eps_1000 < eps_100, "Epsilon should decrease: {} should be < {}", eps_1000, eps_100);
+        assert!(eps_5000 < eps_1000, "Epsilon should decrease: {} should be < {}", eps_5000, eps_1000);
+    }
+
+    #[test]
+    fn test_epsilon_approaches_end() {
+        // After many steps, epsilon should approach EPS_END
+        let eps_very_late = calculate_epsilon(100_000);
+        assert!(
+            (eps_very_late - EPS_END).abs() < 0.001,
+            "Epsilon should approach EPS_END ({}) but got {}",
+            EPS_END,
+            eps_very_late
+        );
+    }
+
+    #[test]
+    fn test_epsilon_never_below_end() {
+        // Epsilon should never go below EPS_END
+        for steps in [0, 100, 1000, 10000, 100000, 1000000] {
+            let epsilon = calculate_epsilon(steps);
+            assert!(
+                epsilon >= EPS_END,
+                "Epsilon {} at step {} should be >= EPS_END {}",
+                epsilon,
+                steps,
+                EPS_END
+            );
+        }
+    }
+
+    #[test]
+    fn test_epsilon_decay_formula() {
+        // Verify the exponential decay formula: EPS_END + (EPS_START - EPS_END) * exp(-steps / EPS_DECAY)
+        let steps = 1000usize;
+        let expected = EPS_END + (EPS_START - EPS_END) * (-1.0 * steps as f32 / EPS_DECAY).exp();
+        let actual = calculate_epsilon(steps);
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "Formula mismatch: expected {}, got {}",
+            expected,
+            actual
+        );
+    }
 }
